@@ -1,5 +1,6 @@
 #include <WiFi.h>
 #include <WebServer.h>
+#define SENSOR_PIN 13
 const char* ssid = "shacharito";
 const char* password = "shachar123456";
 WebServer server(80);
@@ -24,19 +25,29 @@ void handleRoot() {
 void handleStatus() {
   Serial.println("Client requested status");
 
+  int sensorValue = digitalRead(SENSOR_PIN);
+
   String detectionStatus;
 
-  if ((millis() / 5000) % 2 == 0) {
-    detectionStatus = "No detection";
-  } else {
+  if (sensorValue == HIGH) {
     detectionStatus = "Detection";
+  } else {
+    detectionStatus = "No detection";
   }
+
+  Serial.print("Sensor value: ");
+  Serial.println(sensorValue);
+  Serial.print("Detection status: ");
+  Serial.println(detectionStatus);
 
   String status = "";
   status += "{";
   status += "\"wifi\":\"connected\",";
   status += "\"device\":\"ESP32\",";
   status += "\"server\":\"running\",";
+  status += "\"sensor_value\":";
+  status += sensorValue;
+  status += ",";
   status += "\"detection\":\"";
   status += detectionStatus;
   status += "\"";
@@ -46,6 +57,7 @@ void handleStatus() {
 }
 void setup() {
   Serial.begin(115200);
+  pinMode(SENSOR_PIN, INPUT);
   delay(1000);
   Serial.println();
   Serial.println("Starting ESP32 Web Server...");
