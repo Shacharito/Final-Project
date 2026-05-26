@@ -1,0 +1,8 @@
+ESP32:
+VCC = 5 V
+Current = 0.7 A
+
+Sensors:
+Grove- Digital PIR:
+VCC = 5 V
+Curren = 00.05 A
