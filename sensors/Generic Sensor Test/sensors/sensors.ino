@@ -1,4 +1,3 @@
-#### HDLK2451 Radar and ESP32 CAM Integration
 #include "esp_camera.h"
 
 // AI Thinker ESP32 CAM pins
@@ -21,7 +20,9 @@
 #define HREF_GPIO_NUM     23
 #define PCLK_GPIO_NUM     22
 
-#define RADAR_OT1         13
+// Generic digital sensor trigger input
+// Connect the sensor digital output to GPIO13
+#define SENSOR_TRIGGER_PIN 13
 
 unsigned long lastCaptureTime = 0;
 const unsigned long captureCooldownMs = 3000;
@@ -91,7 +92,7 @@ void sendImageToPC(camera_fb_t *fb) {
 }
 
 void captureImage() {
-  Serial.println("Trigger detected. Capturing image...");
+  Serial.println("Sensor trigger detected. Capturing image...");
 
   camera_fb_t *fb = esp_camera_fb_get();
 
@@ -114,19 +115,19 @@ void setup() {
   Serial.begin(115200);
   delay(2000);
 
-  pinMode(RADAR_OT1, INPUT);
+  pinMode(SENSOR_TRIGGER_PIN, INPUT);
 
-  Serial.println("ESP32 CAM and HLK LD2451 integration started");
+  Serial.println("ESP32 CAM generic sensor trigger started");
 
   setupCamera();
 
-  Serial.println("Waiting for radar trigger...");
+  Serial.println("Waiting for sensor trigger...");
 }
 
 void loop() {
-  int radarState = digitalRead(RADAR_OT1);
+  int sensorState = digitalRead(SENSOR_TRIGGER_PIN);
 
-  if (radarState == HIGH) {
+  if (sensorState == HIGH) {
     unsigned long now = millis();
 
     if (now - lastCaptureTime > captureCooldownMs) {
