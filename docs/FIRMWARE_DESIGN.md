@@ -72,7 +72,7 @@ Compile + upload takes ~10 minutes (VirtualBox USB). The firmware exposes a stab
 
 ```bash
 export PATH="$HOME/.local/bin:$PATH"
-SKETCH="/home/amit/studies/final_project/Final-Project/men_detection_model/men_ai_model"
+SKETCH="/home/amit/studies/final_project/Final-Project/firmware/men_ai_model"
 FQBN="esp32:esp32:esp32s3:PSRAM=opi,FlashSize=4M,PartitionScheme=huge_app,USBMode=hwcdc,UploadMode=default,CPUFreq=240"
 CFG="$HOME/.arduinoIDE/arduino-cli.yaml"
 

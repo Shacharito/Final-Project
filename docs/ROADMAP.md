@@ -3,7 +3,7 @@
 > **Rule**: Update this file at the end of every session or after every major improvement.
 >
 > For technical reference → see [FIRMWARE_DESIGN.md](FIRMWARE_DESIGN.md)  
-> For debug history → see [men_ai_model/SESSION_NOTES.md](men_ai_model/SESSION_NOTES.md)
+> For debug history → see [SESSION_NOTES.md](SESSION_NOTES.md)
 
 ---
 

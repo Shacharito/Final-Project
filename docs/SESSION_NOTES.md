@@ -1,6 +1,6 @@
 # men_ai_model – Session Notes
 
-> For project goals and status → see [ROADMAP.md](../ROADMAP.md)
+> For project goals and status → see [ROADMAP.md](ROADMAP.md)
 >
 > This file records debug investigations and session-by-session technical notes.
 
