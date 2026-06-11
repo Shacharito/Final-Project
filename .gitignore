@@ -1,4 +1,5 @@
 # Captured images (auto-generated, large binary files)
-men_detection_model/captured_images/*.jpg
-flow/captured_images/*.jpg
-sleep mode/camera_mode/captured_images/*.jpg
+**/captured_images/*.jpg
+
+# IDE metadata
+**/.idea/
