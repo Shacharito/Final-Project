@@ -634,11 +634,15 @@ void handleDiagnose() {
 // ==================================
 
 void setup() {
+    // Initialize Serial FIRST and wait for full stabilization
+    Serial.begin(460800);
+    delay(3000);  // Full 3-second delay for UART stability (same as reference firmware)
+    Serial.flush();
+    
+    // NOW configure brown-out register (after serial is stable)
     WRITE_PERI_REG(RTC_CNTL_BROWN_OUT_REG, 0);
     
-    Serial.begin(460800);
-    delay(1000);
-    
+    // Now safe to print
     Serial.println("\n\n[BOOT:0] Starting setup()");
     Serial.println("[BOOT:1] Brown-out register disabled");
     Serial.println("[BOOT:2] Serial initialized at 460800");
