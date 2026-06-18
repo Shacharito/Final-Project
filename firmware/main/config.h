@@ -29,19 +29,25 @@
 #endif
 
 // ==================================
-// Project-specific Pins
-// ==================================
-#define WAKEUP_PIN GPIO_NUM_13
+// Project specific Pins
+
+// GPIO21 receives the digital output from the Grove PIR sensor.
+#define PIR_WAKEUP_PIN GPIO_NUM_21
+
+// GPIO3 receives the digital OT1 output from the HLK sensor.
+#define HLK_WAKEUP_PIN GPIO_NUM_3
 
 // Sensor Pins
-#define GROVE_PIR_PIN GPIO_NUM_21   // GROVE PIR motion sensor (GPIO21)
 
-// HLK-LD2451 Millimeter-Wave Radar Sensor (via UART)
-#define HLK_LD2451_UART_NUM UART_NUM_2  // Using UART2
-#define HLK_LD2451_RX_PIN GPIO_NUM_14   // RX pin (GPIO14)
-#define HLK_LD2451_TX_PIN GPIO_NUM_12   // TX pin (GPIO12)
-#define HLK_LD2451_BAUD 115200          // Standard baud rate for HLK-LD2451
+// The PIR signal pin is also used as a deep sleep wakeup source.
+#define GROVE_PIR_PIN PIR_WAKEUP_PIN
 
+// HLK LD2451 UART configuration
+// UART communication is currently disabled.
+// The controller wakes from the HLK digital OT1 output on GPIO3.
+#define HLK_LD2451_UART_NUM UART_NUM_2
+#define HLK_LD2451_RX_PIN GPIO_NUM_14
+#define HLK_LD2451_BAUD 115200
 // Sensor Enable Pin (optional)
 #define SENSOR_ENABLE_PIN GPIO_NUM_2
 
