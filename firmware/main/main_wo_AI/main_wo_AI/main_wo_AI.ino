@@ -1,3 +1,16 @@
+/*define in tools:
+Board: ESP32S3 Dev Module
+Port: הפורט של הבקר, למשל COM9
+
+USB CDC On Boot: Disabled
+CPU Frequency: 240MHz
+Flash Size: 4MB
+Partition Scheme: Huge APP
+PSRAM: OPI PSRAM
+Flash Mode: DIO
+Upload Speed: 115200
+Erase All Flash Before Sketch Upload: Enabled*/
+
 #include "config.h"
 
 #include <WiFi.h>
