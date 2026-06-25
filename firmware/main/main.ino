@@ -268,7 +268,9 @@ void goToDeepSleep(unsigned long duration_sec) {
 // Configure both sensor pins as digital inputs.
 pinMode(PIR_WAKEUP_PIN, INPUT);
 pinMode(HLK_WAKEUP_PIN, INPUT);
-
+// Print the current sensor states before waiting for LOW.
+Serial.printf("[SLEEP] PIR state before sleep: %d\n", digitalRead(PIR_WAKEUP_PIN));
+Serial.printf("[SLEEP] HLK state before sleep: %d\n", digitalRead(HLK_WAKEUP_PIN));
 // Wait until both sensor outputs return to LOW.
 // EXT1 is level based, so entering sleep while a pin is HIGH
 // would cause the controller to wake up immediately.
