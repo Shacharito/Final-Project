@@ -10,7 +10,7 @@
 
 ✅ **When to Use This:**
 - Sensors not connected yet? Device will still run!
-- Want to see device status? Use `/health`
+- Want to see device status? Use `/health`אי
 - Need detailed diagnostics? Use `/diagnose`
 
 ---

@@ -133,19 +133,22 @@ void initGROVEPIR() {
     Serial.println("[PIR:3] ✓ GROVE PIR ready");
 }
 
-// Initialize HLK-LD2451 millimeter-wave radar (UART)
+// Initialize the HLK digital detection output.
+// The HLK OT1 pin is connected to GPIO3.
+// UART communication is not used at this stage.
 void initHLK_LD2451() {
-    Serial.println("[HLK:0] Initializing HLK-LD2451 on UART2...");
-    Serial.printf("[HLK:1] TX pin: GPIO%d\n", HLK_LD2451_TX_PIN);
-    Serial.printf("[HLK:2] RX pin: GPIO%d\n", HLK_LD2451_RX_PIN);
-    Serial.println("[HLK:3] Configuring UART2 at 115200 baud");
-    
-    // Configure UART2 for HLK-LD2451 communication
-    // Parameters: uart_num, baud_rate, tx_pin, rx_pin
-    
-    // Note: UART2 begin will be called from main setup
+    Serial.println("[HLK:0] Initializing HLK digital output...");
+
+    Serial.printf("[HLK:1] HLK OT1 wakeup pin: GPIO%d\n", HLK_WAKEUP_PIN);
+
+    // Configure the HLK OT1 signal as a digital input.
+    pinMode(HLK_WAKEUP_PIN, INPUT);
+
+    Serial.printf( "[HLK:2] Current OT1 state: %d\n",digitalRead(HLK_WAKEUP_PIN));
+
     device_state.hlk_available = true;
-    Serial.println("[HLK:4] ✓ HLK-LD2451 ready");
+
+    Serial.println("[HLK:3] HLK digital output ready");
 }
 
 // Initialize all sensors (gracefully handle missing sensors)
@@ -196,41 +199,29 @@ bool readGROVEPIR() {
     return false;
 }
 
-// Read HLK-LD2451 sensor via UART
-// NOTE: Full implementation depends on your sensor's command protocol
-// This is a placeholder that monitors for data on UART2
+// Read the digital OT1 output from the HLK sensor.
+// HIGH means the sensor currently reports a detection.
 bool readHLK_LD2451() {
+    // Do not read the sensor if initialization failed.
     if (!device_state.hlk_available) {
-        Serial.println("[HLK:READ] HLK not available - returning false");
-        return false; // Sensor not available
+        return false;
     }
-    
-    Serial.println("[HLK:READ] Checking Serial2 for data...");
-    
-    // The HLK-LD2451 sends detection data periodically via UART2
-    // This function would need to:
-    // 1. Read data from UART2 serial buffer
-    // 2. Parse the detection frames
-    // 3. Extract distance and detection state
-    // 4. Return true if object detected
-    
-    // Placeholder: Check if data available on UART2
-    if (Serial2.available()) {
-        Serial.println("[HLK:READ] Data available on Serial2, reading...");
-        String hlk_data = Serial2.readStringUntil('\n');
-        Serial.printf("[HLK:READ] Received: %s\n", hlk_data.c_str());
-        
-        // Example: If response contains "Distance" or detection indicator
-        if (hlk_data.indexOf("Distance") >= 0 || hlk_data.indexOf("target") >= 0) {
-            device_state.hlk_detection_state = 1;
-            Serial.println("[HLK:READ] ✓ Target detected!");
-            return true;
-        }
-    } else {
-        Serial.println("[HLK:READ] No data on Serial2");
-    }
-    
-    return false;
+
+    // Read the current digital state from the HLK OT1 output.
+    int hlkState = digitalRead(HLK_WAKEUP_PIN);
+
+    // Save the latest state in the global device status structure.
+    device_state.hlk_detection_state = hlkState;
+
+    // Print the current state for debugging.
+    Serial.printf(
+        "[HLK:READ] GPIO%d state: %d\n",
+        HLK_WAKEUP_PIN,
+        hlkState
+    );
+
+    // Return true only when the HLK output is HIGH.
+    return hlkState == HIGH;
 }
 
 // Check if any sensor triggered detection
@@ -263,7 +254,7 @@ bool shouldRunInference() {
 
 void goToDeepSleep(unsigned long duration_sec) {
     Serial.printf("\n[SLEEP] Preparing deep sleep for %lu seconds\n", duration_sec);
-    Serial.println("[SLEEP] Wakeup triggers: GPIO13 HIGH (sensor) or timer");
+    
     
     // Cleanup
     if (jpg_buf) { free(jpg_buf); jpg_buf = nullptr; jpg_len = 0; }
@@ -274,12 +265,53 @@ void goToDeepSleep(unsigned long duration_sec) {
     WiFi.disconnect(true);
     WiFi.mode(WIFI_OFF);
     
-    // Configure GPIO wakeup (for external sensor)
-    rtc_gpio_init(WAKEUP_PIN);
-    rtc_gpio_set_direction(WAKEUP_PIN, RTC_GPIO_MODE_INPUT_ONLY);
-    rtc_gpio_pulldown_en(WAKEUP_PIN);
-    rtc_gpio_pullup_dis(WAKEUP_PIN);
-    esp_sleep_enable_ext0_wakeup(WAKEUP_PIN, 1);
+   Serial.printf(
+    "[SLEEP] Wakeup triggers: PIR GPIO%d or HLK GPIO%d HIGH, or timer\n",
+    PIR_WAKEUP_PIN,
+    HLK_WAKEUP_PIN
+);
+
+// Configure both sensor pins as digital inputs.
+pinMode(PIR_WAKEUP_PIN, INPUT);
+pinMode(HLK_WAKEUP_PIN, INPUT);
+// Print the current sensor states before waiting for LOW.
+Serial.printf("[SLEEP] PIR state before sleep: %d\n", digitalRead(PIR_WAKEUP_PIN));
+Serial.printf("[SLEEP] HLK state before sleep: %d\n", digitalRead(HLK_WAKEUP_PIN));
+// Wait until both sensor outputs return to LOW.
+// EXT1 is level based, so entering sleep while a pin is HIGH
+// would cause the controller to wake up immediately.
+Serial.println("[SLEEP] Waiting for PIR and HLK outputs to return LOW...");
+
+unsigned long sensorWaitStart = millis();
+
+while (digitalRead(PIR_WAKEUP_PIN) == HIGH ||digitalRead(HLK_WAKEUP_PIN) == HIGH) {
+    // Cancel sleep if a sensor remains HIGH for too long.
+    if (millis() - sensorWaitStart > 15000) {
+        Serial.println("[SLEEP] Sensor remained HIGH for 15 seconds. Sleep cancelled.");
+        return;
+    }
+
+    delay(100);
+}
+
+Serial.println("[SLEEP] Both sensor outputs are LOW");
+// EXT1 wakes the controller when either sensor output becomes HIGH.
+uint64_t wakeupMask =
+    (1ULL << PIR_WAKEUP_PIN) |
+    (1ULL << HLK_WAKEUP_PIN);
+
+esp_err_t wakeupResult = esp_sleep_enable_ext1_wakeup(
+    wakeupMask,
+    ESP_EXT1_WAKEUP_ANY_HIGH
+);
+
+if (wakeupResult != ESP_OK) {
+    Serial.printf(
+        "[SLEEP] Failed to configure EXT1 wakeup: %d\n",
+        wakeupResult
+    );
+    return;
+}
     
     // Configure timer wakeup
     if (duration_sec > 0) {
@@ -292,16 +324,45 @@ void goToDeepSleep(unsigned long duration_sec) {
     esp_deep_sleep_start();
 }
 
+// Return a readable description of the wakeup source.
+// EXT1 allows both the PIR and HLK pins to wake the controller.
 String getWakeupReasonText() {
-    esp_sleep_wakeup_cause_t wakeupReason = esp_sleep_get_wakeup_cause();
-    switch (wakeupReason) {
-        case ESP_SLEEP_WAKEUP_EXT0:
-            return "External GPIO13 trigger (sensor)";
-        case ESP_SLEEP_WAKEUP_TIMER:
-            return "Timer wakeup";
-        default:
-            return "Power-on or reset";
+    esp_sleep_wakeup_cause_t wakeupReason =
+        esp_sleep_get_wakeup_cause();
+
+    // The controller was awakened by one or both sensor GPIOs.
+    if (wakeupReason == ESP_SLEEP_WAKEUP_EXT1) {
+        uint64_t wakeupStatus =
+            esp_sleep_get_ext1_wakeup_status();
+
+        bool pirTriggered =
+            wakeupStatus & (1ULL << PIR_WAKEUP_PIN);
+
+        bool hlkTriggered =
+            wakeupStatus & (1ULL << HLK_WAKEUP_PIN);
+
+        if (pirTriggered && hlkTriggered) {
+            return "PIR and HLK trigger";
+        }
+
+        if (pirTriggered) {
+            return "PIR trigger";
+        }
+
+        if (hlkTriggered) {
+            return "HLK trigger";
+        }
+
+        return "External sensor trigger";
     }
+
+    // The controller was awakened by the configured timer.
+    if (wakeupReason == ESP_SLEEP_WAKEUP_TIMER) {
+        return "Timer wakeup";
+    }
+
+    // This usually means power was connected or reset was pressed.
+    return "Power-on or reset";
 }
 
 // ==================================
@@ -749,9 +810,9 @@ void setup() {
     // ============== SECTION 6.2B: SENSOR INITIALIZATION ==============
     Serial.println("\n[SENSORS:0] ▶ Sensor Initialization");
     // TEMPORARILY DISABLED - debugging crash
-    // initSensors();
-    Serial.println("[SENSORS:1] ⚠️  Sensors disabled for debugging");
-    
+    // Initialize the PIR and HLK digital input pins.
+    initSensors();
+    Serial.println("[SENSORS:1] Sensors initialized");
     // ============== SECTION 6.3: WEB SERVER SETUP ==============
     Serial.println("\n[SERVER:0] ▶ Web Server Setup");
     
@@ -812,11 +873,20 @@ void setup() {
     }
     Serial.println("[STARTUP:2] About to check wakeup cause");
     
-    // If woken by external sensor, run inference
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT0 && device_state.camera_initialized) {
-        Serial.println("[BOOT] Woken by external sensor - running inference automatically...\n");
-        handleRunInference();
-    }
+    // If woken by the PIR or HLK sensor, run inference automatically.
+if (
+    esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_EXT1 &&
+    device_state.camera_initialized
+) {
+    Serial.println(
+        "[BOOT] Woken by PIR or HLK sensor");
+
+    Serial.printf( "[BOOT] Wakeup source: %s\n",getWakeupReasonText().c_str());
+
+    Serial.println("[BOOT] Running inference automatically...\n");
+
+    handleRunInference();
+}
     
     Serial.println("\n[SETUP:SUCCESS] ✓✓✓ setup() completed successfully! ✓✓✓\n");
     Serial.println("[SERIAL] Ready. Commands: RUN STATUS WIFION WIFIOFF PING");
