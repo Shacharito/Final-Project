@@ -48,6 +48,12 @@ char wifi_password[64] = "";
 unsigned long sleep_duration_sec = 60;
 float person_threshold = 0.7;
 
+// ISOLATION MODE: when true, WiFi stays OFF at boot. Device is controlled over
+// the USB serial cable (RUN/STATUS/WIFION/WIFIOFF). WiFi is only powered on
+// on-demand (WIFION) to serve the photo over HTTP. Used to isolate whether the
+// brownout is caused by the WiFi radio spike or by the camera/PSRAM inrush.
+bool wifi_enabled = false;
+
 // Device State Tracking - tracks what's working and what failed
 typedef struct {
   bool wifi_connected = false;
@@ -677,43 +683,64 @@ void setup() {
         strcpy(wifi_password, WIFI_PASSWORD_FALLBACK);
         Serial.println("[WIFI:2] Fallback credentials set");
     }
-    
-    Serial.println("[WIFI:3] About to call WiFi.begin()");
-    WiFi.begin(wifi_ssid, wifi_password);
-    Serial.println("[WIFI:4] WiFi.begin() returned successfully");
-    Serial.printf("[WIFI:5] Connecting to '%s' ", wifi_ssid);
-    
-    int attempts = 0;
-    while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-        delay(500);
-        Serial.print(".");
-        attempts++;
+
+    if (!wifi_enabled) {
+        // ISOLATION MODE: keep the radio fully off at boot so the WiFi power-up
+        // spike cannot stack with the camera/PSRAM inrush. WiFi is brought up
+        // on demand later via the serial WIFION command.
+        WiFi.mode(WIFI_OFF);
+        Serial.println("[WIFI:1b] ⚠️  Isolation mode: WiFi OFF at boot (serial control)");
+    } else {
+        Serial.println("[WIFI:3] About to call WiFi.begin()");
+        // Lower WiFi TX power to reduce peak radio current draw. The WiFi TX burst
+        // is the largest current spike and was browning out the rail on the
+        // available (marginal) USB cable. 8.5 dBm only trims WiFi range, NOT CPU
+        // clock or inference performance.
+        WiFi.mode(WIFI_STA);
+        WiFi.setTxPower(WIFI_POWER_8_5dBm);
+        WiFi.begin(wifi_ssid, wifi_password);
+        Serial.printf("[WIFI:3b] TX power capped at %d (0.25dBm units)\n", WiFi.getTxPower());
+        Serial.println("[WIFI:4] WiFi.begin() returned successfully");
+        Serial.printf("[WIFI:5] Connecting to '%s' ", wifi_ssid);
+
+        int attempts = 0;
+        while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+            delay(500);
+            Serial.print(".");
+            attempts++;
+        }
+        Serial.println();
+
+        if (WiFi.status() != WL_CONNECTED) {
+            Serial.println("[INIT] ❌ WiFi connection FAILED");
+            Serial.println("[INIT] Continuing in serial-control mode (no deep sleep)");
+        } else {
+            device_state.wifi_connected = true;
+            Serial.println("[WIFI:6] device_state.wifi_connected set to true");
+            Serial.printf("[WIFI:7] ✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
+            Serial.printf("[WIFI:8] Signal strength: %d dBm\n", WiFi.RSSI());
+        }
     }
-    Serial.println();
-    
-    if (WiFi.status() != WL_CONNECTED) {
-        Serial.println("[INIT] ❌ WiFi connection FAILED");
-        Serial.println("[INIT] Entering deep sleep - will retry on next wakeup");
-        delay(500);
-        goToDeepSleep(sleep_duration_sec);
-        return;
-    }
-    
-    device_state.wifi_connected = true;
-    Serial.println("[WIFI:6] device_state.wifi_connected set to true");
-    Serial.printf("[WIFI:7] ✓ WiFi connected! IP: %s\n", WiFi.localIP().toString().c_str());
-    Serial.printf("[WIFI:8] Signal strength: %d dBm\n", WiFi.RSSI());
     
     // ============== SECTION 6.2: HARDWARE INITIALIZATION (NON-FATAL) ==============
     Serial.println("\n[CAMERA:0] ▶ Hardware Initialization (continue if failures)");
     Serial.println("[CAMERA:1] About to call initCamera()");
     
-    // Try to initialize camera - DON'T crash if it fails
+    // Try to initialize camera - DON'T crash if it fails. The camera is OPTIONAL:
+    // if it is not connected (or the ribbon is loose) the device still boots fully
+    // and every camera-dependent endpoint returns a clean error instead of crashing.
     if (!initCamera()) {
-        Serial.println("[CAMERA:2] initCamera() returned false");
-        Serial.println("[CAMERA:3] ⚠️  Camera initialization failed");
-        Serial.println("[CAMERA:4] Device will continue without inference capability");
         device_state.camera_initialized = false;
+        Serial.println("[CAMERA:2] initCamera() returned false");
+        Serial.println("╔════════════════════════════════════════════════════╗");
+        Serial.println("║  ⚠️  CAMERA NOT CONNECTED / NOT DETECTED            ║");
+        Serial.printf( "║     reason: esp_camera_init error 0x%-3x            ║\n",
+                       device_state.camera_init_error);
+        Serial.println("║     The device will keep running normally.          ║");
+        Serial.println("║     Inference (/run, RUN) is DISABLED until a        ║");
+        Serial.println("║     camera is connected and the board reboots.      ║");
+        Serial.println("║     Check the ribbon is fully seated + latched.     ║");
+        Serial.println("╚════════════════════════════════════════════════════╝");
     } else {
         Serial.println("[CAMERA:2] initCamera() returned true");
         Serial.println("[CAMERA:5] ✓ Camera ready for inference");
@@ -748,9 +775,18 @@ void setup() {
     Serial.println("[SERVER:8] Registering /diagnose endpoint");
     server.on("/diagnose", HTTP_GET, handleDiagnose);
     
-    Serial.println("[SERVER:9] About to call server.begin()");
-    server.begin();
-    Serial.println("[SERVER:10] ✓ Web server started on port 80");
+    // Only START the listening socket when WiFi (and therefore the lwIP TCP/IP
+    // stack) is actually up. Calling server.begin() with the radio OFF locks a
+    // NULL lwIP mutex and aborts (assert xQueueSemaphoreTake). When WiFi is
+    // brought up later via the WIFION serial command, connectWiFiOnDemand()
+    // calls server.begin() at that point.
+    if (device_state.wifi_connected) {
+        Serial.println("[SERVER:9] About to call server.begin()");
+        server.begin();
+        Serial.println("[SERVER:10] ✓ Web server started on port 80");
+    } else {
+        Serial.println("[SERVER:9] ⏸  WiFi off — web server deferred (use WIFION to start)");
+    }
     
     // ============== SECTION 6.4: STARTUP SUMMARY ==============
     Serial.println("\n[STARTUP:0] Printing summary...");
@@ -783,39 +819,118 @@ void setup() {
     }
     
     Serial.println("\n[SETUP:SUCCESS] ✓✓✓ setup() completed successfully! ✓✓✓\n");
+    Serial.println("[SERIAL] Ready. Commands: RUN STATUS WIFION WIFIOFF PING");
+}
+
+// ==================================
+// SECTION 6.5: SERIAL CONTROL (USB cable)
+// ==================================
+
+// Run capture + inference and report the result over the USB serial cable.
+// Replies are prefixed with ">>>" so the Python client can distinguish command
+// responses from ordinary debug logging. No WiFi/radio involved.
+void runInferenceSerial() {
+    if (!device_state.camera_initialized) {
+        Serial.println(">>>RESULT {\"ok\":false,\"error\":\"camera_not_initialized\"}");
+        return;
+    }
+    if (!captureImageForModel()) {
+        Serial.printf(">>>RESULT {\"ok\":false,\"error\":\"capture_failed\",\"code\":%u}\n",
+                      device_state.last_capture_error);
+        return;
+    }
+
+    unsigned long start_ms = millis();
+    signal_t signal;
+    signal.total_length = EI_CLASSIFIER_RAW_SAMPLE_COUNT;
+    signal.get_data = &get_data;
+    ei_impulse_result_t result = {0};
+
+    EI_IMPULSE_ERROR res = run_classifier(&signal, &result, false);
+    unsigned long inference_ms = millis() - start_ms;
+    device_state.last_inference_ms = inference_ms;
+
+    if (res != EI_IMPULSE_OK) {
+        Serial.printf(">>>RESULT {\"ok\":false,\"error\":\"inference_failed\",\"code\":%d}\n", res);
+        return;
+    }
+
+    int top_idx = 0;
+    for (int i = 1; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+        if (result.classification[i].value > result.classification[top_idx].value) top_idx = i;
+    }
+
+    String json = "{\"ok\":true,\"top_label\":\"";
+    json += String(result.classification[top_idx].label) + "\",";
+    json += "\"top_score\":" + String(result.classification[top_idx].value, 4) + ",";
+    json += "\"inference_ms\":" + String(inference_ms) + ",\"labels\":{";
+    for (int i = 0; i < EI_CLASSIFIER_LABEL_COUNT; i++) {
+        if (i > 0) json += ",";
+        json += "\"" + String(result.classification[i].label) + "\":"
+              + String(result.classification[i].value, 4);
+    }
+    json += "}}";
+    Serial.println(">>>RESULT " + json);
+}
+
+// Bring the WiFi radio up on demand (only when a photo/flow transfer is needed).
+void connectWiFiOnDemand() {
+    if (device_state.wifi_connected && WiFi.status() == WL_CONNECTED) {
+        Serial.println(">>>IP " + WiFi.localIP().toString());
+        return;
+    }
+    if (strlen(wifi_ssid) == 0) {
+        strcpy(wifi_ssid, WIFI_SSID_FALLBACK);
+        strcpy(wifi_password, WIFI_PASSWORD_FALLBACK);
+    }
+    WiFi.mode(WIFI_STA);
+    WiFi.setTxPower(WIFI_POWER_8_5dBm);   // cap radio current spike
+    WiFi.begin(wifi_ssid, wifi_password);
+    int attempts = 0;
+    while (WiFi.status() != WL_CONNECTED && attempts < 20) { delay(500); attempts++; }
+    if (WiFi.status() == WL_CONNECTED) {
+        device_state.wifi_connected = true;
+        server.begin();
+        Serial.println(">>>IP " + WiFi.localIP().toString());
+    } else {
+        Serial.println(">>>IP FAILED");
+    }
+}
+
+// Parse one-line commands arriving over the USB serial cable.
+void handleSerialCommands() {
+    if (!Serial.available()) return;
+    String cmd = Serial.readStringUntil('\n');
+    cmd.trim();
+    if (cmd.length() == 0) return;
+
+    if (cmd.equalsIgnoreCase("RUN")) {
+        runInferenceSerial();
+    } else if (cmd.equalsIgnoreCase("WIFION")) {
+        connectWiFiOnDemand();
+    } else if (cmd.equalsIgnoreCase("WIFIOFF")) {
+        WiFi.disconnect(true);
+        WiFi.mode(WIFI_OFF);
+        device_state.wifi_connected = false;
+        Serial.println(">>>OK wifi_off");
+    } else if (cmd.equalsIgnoreCase("STATUS")) {
+        Serial.printf(">>>STATUS {\"camera\":%d,\"wifi\":%d,\"heap\":%u,\"psram\":%u,\"boot\":%d}\n",
+                      device_state.camera_initialized, device_state.wifi_connected,
+                      ESP.getFreeHeap(), ESP.getFreePsram(), bootCount);
+    } else if (cmd.equalsIgnoreCase("PING")) {
+        Serial.println(">>>PONG");
+    } else {
+        Serial.println(">>>ERR unknown_command");
+    }
 }
 
 void loop() {
-    // ============== SENSOR TRIGGER LOOP ==============
-    Serial.println("[LOOP:0] Starting main loop iteration");
-    // Check if sensors indicate motion/object - if so, run inference
-    static unsigned long last_inference_trigger_time = 0;
-    const unsigned long INFERENCE_COOLDOWN_MS = 2000; // Avoid too-frequent triggers
-    
-    // Check sensors only if camera is ready and enough time passed
-    if (device_state.camera_initialized && 
-        (millis() - last_inference_trigger_time) > INFERENCE_COOLDOWN_MS) {
-        
-        // Check for sensor trigger
-        if (shouldRunInference()) {
-            Serial.println("\n[FLOW] 🔴 SENSOR TRIGGERED - Starting inference pipeline");
-            
-            // Capture image from camera
-            uint8_t capture_result = captureImageForModel();
-            if (capture_result == 0) {
-                Serial.println("[FLOW] ✓ Image captured successfully");
-                
-                // Run inference on captured image
-                handleRunInference();
-                
-                last_inference_trigger_time = millis();
-            } else {
-                Serial.printf("[FLOW] ❌ Image capture failed: code %d\n", capture_result);
-            }
-        }
+    // Serial cable is the primary control channel (works with WiFi off).
+    handleSerialCommands();
+
+    // Serve HTTP only while the radio is actually up (on-demand photo/flow).
+    if (device_state.wifi_connected) {
+        server.handleClient();
     }
-    
-    // ============== WEB SERVER HANDLING ==============
-    server.handleClient();
-    delay(10);
+    delay(5);
 }
