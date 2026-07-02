@@ -686,12 +686,104 @@ void loop() {
       printResults(result);
     }
 
+    else if (command == "PHOTO") {
+      // Capture a JPEG and stream it over serial as base64 using an ACK
+      // handshake so the host serial buffer never overruns (reliable even
+      // over VM USB-serial). No WiFi needed.
+      if (!captureImageForModel()) {
+        Serial.println("PHOTO_ERROR: capture failed");
+        Serial.flush();
+        return;
+      }
+      captureDisplayJpeg();
+
+      if (!jpg_buf || jpg_len == 0) {
+        Serial.println("PHOTO_ERROR: no jpeg");
+        Serial.flush();
+        return;
+      }
+
+      static const char b64[] =
+          "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+      // Encode the whole JPEG to base64 in a PSRAM buffer first.
+      size_t b64_len = ((jpg_len + 2) / 3) * 4;
+      char *enc = (char *)heap_caps_malloc(b64_len + 1,
+                                           MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+      if (enc == nullptr) {
+        Serial.println("PHOTO_ERROR: base64 alloc failed");
+        Serial.flush();
+        return;
+      }
+
+      size_t o = 0;
+      size_t i = 0;
+      while (i + 2 < jpg_len) {
+        uint32_t n = (jpg_buf[i] << 16) | (jpg_buf[i + 1] << 8) | jpg_buf[i + 2];
+        enc[o++] = b64[(n >> 18) & 0x3F];
+        enc[o++] = b64[(n >> 12) & 0x3F];
+        enc[o++] = b64[(n >> 6) & 0x3F];
+        enc[o++] = b64[n & 0x3F];
+        i += 3;
+      }
+      size_t rem = jpg_len - i;
+      if (rem == 1) {
+        uint32_t n = jpg_buf[i] << 16;
+        enc[o++] = b64[(n >> 18) & 0x3F];
+        enc[o++] = b64[(n >> 12) & 0x3F];
+        enc[o++] = '=';
+        enc[o++] = '=';
+      } else if (rem == 2) {
+        uint32_t n = (jpg_buf[i] << 16) | (jpg_buf[i + 1] << 8);
+        enc[o++] = b64[(n >> 18) & 0x3F];
+        enc[o++] = b64[(n >> 12) & 0x3F];
+        enc[o++] = b64[(n >> 6) & 0x3F];
+        enc[o++] = '=';
+      }
+      enc[o] = '\0';
+
+      // Announce total encoded length; host replies with any byte to start
+      // and after every chunk (ACK handshake).
+      const size_t CHUNK = 256;
+      Serial.print("PHOTO_BEGIN ");
+      Serial.print((int)jpg_len);
+      Serial.print(" ");
+      Serial.println((int)o);   // base64 length
+      Serial.flush();
+
+      size_t sent = 0;
+      while (sent < o) {
+        // wait for host ACK (any byte) before sending the next chunk
+        unsigned long t0 = millis();
+        while (!Serial.available()) {
+          if (millis() - t0 > 5000) { free(enc); Serial.println("PHOTO_ABORT"); Serial.flush(); goto photo_done; }
+        }
+        Serial.read();
+
+        size_t len = (o - sent < CHUNK) ? (o - sent) : CHUNK;
+        Serial.write((const uint8_t *)(enc + sent), len);
+        Serial.flush();
+        sent += len;
+      }
+      // final ACK, then end marker
+      {
+        unsigned long t0 = millis();
+        while (!Serial.available() && millis() - t0 < 5000) {}
+        if (Serial.available()) Serial.read();
+      }
+      Serial.println();
+      Serial.println("PHOTO_END");
+      Serial.flush();
+      free(enc);
+    photo_done:;
+    }
+
     else {
       Serial.print("Unknown command: ");
       Serial.println(command);
       Serial.flush();
 
-      debugPrint("Use CAPTURE, RUN, or TESTMODEL");
+      debugPrint("Use CAPTURE, RUN, TESTMODEL, or PHOTO");
     }
   }
 }

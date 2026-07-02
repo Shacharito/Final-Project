@@ -1,0 +1,9 @@
+{
+  "additionalFiles": "",
+  "compiler.optimization_flags": "-Os",
+  "customBuildProperties": "",
+  "fqbn": "esp32:esp32:esp32s3:PartitionScheme=huge_app,PSRAM=opi",
+  "hardwareFolders": "/home/amit/.arduino15/packages/esp32/hardware/esp32/3.3.8,/home/amit/.arduino15/packages/esp32/hardware/esp32/3.3.8",
+  "otherLibrariesFolders": "/home/amit/Arduino/libraries",
+  "sketchLocation": "/home/amit/studies/final_project/Final-Project/archive/firmware/men_ai_model"
+}
