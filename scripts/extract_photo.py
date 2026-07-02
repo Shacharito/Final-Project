@@ -77,7 +77,7 @@ def grab_one(ser: serial.Serial) -> bytes | None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", default="/dev/ttyUSB0")
-    ap.add_argument("--baud", type=int, default=460800)
+    ap.add_argument("--baud", type=int, default=115200)
     ap.add_argument("-n", "--count", type=int, default=1, help="number of photos")
     args = ap.parse_args()
 

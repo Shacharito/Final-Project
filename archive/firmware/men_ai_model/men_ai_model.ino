@@ -526,7 +526,7 @@ void handleImage() {
 // ─────────────────────────────────────────────────────────────────────────────
 
 void setup() {
-  Serial.begin(460800);
+  Serial.begin(115200);
   delay(3000);
 
   Serial.println();
